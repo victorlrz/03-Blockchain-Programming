@@ -68,3 +68,13 @@ Then, the code displays the **initial list of orders** from the profile of the A
        r = requests.get('https://api-public.sandbox.pro.coinbase.com/orders', auth=auth)
 Next, it asks the user to **enter the order ID** he wants to cancel and delete it.
 After that, it displays the list of orders again to show that the selected order has disappeared.
+
+#Main
+
+The main is composed of 10 methods, to choose one just enter a number between 1 and 10 include.
+After each execution of the loop, you have to press 1 or 2. 
+1 to execute an other function and 2 in order to leave the program.
+
+Enjoy :) ! 
+
+V&V
