@@ -1,6 +1,13 @@
 import requests
 import json
 import sqlite3
+import pytz
+from datetime import datetime
+import dateutil.parser as dp
+from math import *
+import hmac, hashlib, time
+from requests.auth import AuthBase
+import base64
 
 def getCryptoList():
     response = requests.get("https://api.pro.coinbase.com/products")
@@ -39,10 +46,12 @@ def refreshDataCandle(pair, duration):
     print(candle)
     return candle
 
-
-#https://api.pro.coinbase.com/products/BTC-USD/candles?start=2015-01-07T23:47:25.201Z
-#https://api.pro.coinbase.com/products/BTC-USD/candles?start=2015-11-07T23:47:25.201Z&end=2015-12-07T23:47:25.201Z&granularity=86400
-
+def refreshData(pair):
+    link = ['https://api.pro.coinbase.com/products/', pair, '/trades'] #Top 50 bids and asks (aggregated), for Full Order Book level =3.
+    link = "".join(link)
+    response = requests.get(link)
+    trades = response.json()
+    return trades
 
 def create_candle_table(setTableName):
 
@@ -68,7 +77,7 @@ def store_candle(setTableName, pair, duration): #create candles_table
     data_candle = refreshDataCandle(pair, duration)
 
     for i in range(len(data_candle)):
-        setTableInsert = ("INSERT INTO " + setTableName + """(Id, date, low, high, open, close, volume) VALUES(""" 
+        setTableInsert = ("INSERT OR REPLACE INTO " + setTableName + """(Id, date, low, high, open, close, volume) VALUES(""" 
         + str(i) + "," + str(data_candle[i][0]) + "," + str(data_candle[i][1]) + ","
         + str(data_candle[i][2]) + "," + str(data_candle[i][3]) + "," + str(data_candle[i][4]) 
         + "," + str(data_candle[i][5]) + ")")
@@ -76,6 +85,149 @@ def store_candle(setTableName, pair, duration): #create candles_table
         c.execute(setTableInsert)
         conn.commit()
     
+    c.close()
+    conn.close()
+
+def trackupdates(setTableName,setTableName1, pair, duration):
+    
+    conn = sqlite3.connect(setTableName)
+    c = conn.cursor()
+    c.execute('SELECT MAX(date) ' + 'FROM ' + setTableName ) #Dernière date_enregistrée (dernier tuple) -> MAX
+    first_date = c.fetchone()
+    first_date = int(first_date[0])
+    tz = pytz.timezone('Europe/Paris')
+    first_date = datetime.fromtimestamp(first_date, tz).isoformat() 
+    str(first_date)
+    current_date = str(datetime.now())
+    first_date = first_date[:10] + 'T' + first_date[11:19] + '.201Z'
+    current_date = current_date[:10] + 'T' + current_date[11:20]+'201Z'
+    #Convert to DateTime
+    previous_date = datetime(int(first_date[:4]),int(first_date[5:7]), int(first_date[8:10]), int(first_date[11:13]), int(first_date[14:16]),int(first_date[17:19]))
+    atm_date = datetime(int(current_date[:4]), int(current_date[5:7]), int(current_date[8:10]), int(current_date[11:13]), int(current_date[14:16]), int(current_date[17:19]))
+    duree = atm_date - previous_date
+    duree = duree.seconds
+    
+    nbr_rq = floor(duree/(300*int(duration)))
+  
+    updates = []
+    for i in range(nbr_rq + 1):
+        if(i == 0):
+            link = ['https://api.pro.coinbase.com/products/', pair, '/candles?start='+ first_date + '&granularity=' + duration]
+            link = "".join(link)
+            response = requests.get(link)
+            updates.extend(response.json())
+            #print("START")
+        elif(i == nbr_rq):
+            link = ['https://api.pro.coinbase.com/products/', pair, '/candles?end='+ current_date +'&granularity=' + duration]
+            link = "".join(link)
+            response = requests.get(link)
+            updates.extend(response.json())
+            #print("LAST")
+        else:
+            link = ['https://api.pro.coinbase.com/products/', pair, '/candles?granularity=' + duration]
+            link = "".join(link)
+            response = requests.get(link)
+            updates.extend(response.json())
+            #print("MID")
+    
+    conn = sqlite3.connect(setTableName1)
+    c = conn.cursor()
+
+    tableCreationStatement = "CREATE TABLE IF NOT EXISTS " + setTableName1 + """(Id INTEGER PRIMARY KEY, date INT, low REAL,
+    high REAL, open REAL, close REAL, volume REAL)"""
+    c.execute(tableCreationStatement)
+
+    for i in range(len(updates)):
+        setTableInsert = ("INSERT OR REPLACE INTO " + setTableName1 + """(Id, date, low, high, open, close, volume) VALUES(""" 
+        + str(i) + "," + str(updates[i][0]) + "," + str(updates[i][1]) + ","
+        + str(updates[i][2]) + "," + str(updates[i][3]) + "," + str(updates[i][4]) 
+        + "," + str(updates[i][5]) + ")")
+        print(setTableInsert)
+        c.execute(setTableInsert)
+        conn.commit() 
+    c.close()
+    conn.close()
+
+# Create custom authentication for Coinbase API
+class CoinbaseExchangeAuth(AuthBase):
+    def __init__(self, api_key, secret_key, passphrase):
+        self.api_key = api_key
+        self.secret_key = secret_key
+        self.passphrase = passphrase
+
+    def __call__(self, request):
+        timestamp = str(time.time())
+        message = (timestamp + str(request.method) + str(request.path_url) + str(request.body or ''))
+        message = message.encode('ascii')
+        hmac_key = base64.b64decode(self.secret_key)
+        signature = hmac.new(hmac_key, message, hashlib.sha256)
+        signature_b64 = base64.b64encode(signature.digest())        
+
+        request.headers.update({
+            'CB-ACCESS-SIGN': signature_b64,
+            'CB-ACCESS-TIMESTAMP': timestamp,
+            'CB-ACCESS-KEY': self.api_key,
+            'CB-ACCESS-PASSPHRASE': self.passphrase,
+            'Content-Type': 'application/json'
+        })
+        return request
+
+def createOrder(api_key, secret_key, passphrase, direction, price, amount, pair, orderType):
+    api_url = 'https://api-public.sandbox.pro.coinbase.com/'
+    auth = CoinbaseExchangeAuth(api_key, secret_key, passphrase)
+
+    # Get current user
+    r = requests.get(api_url + 'time', auth=auth)
+    print('\nCurrent user:', r.json())
+
+    # Show accounts
+    r = requests.get(api_url + 'accounts', auth=auth)
+    print('\nAccounts:', r.json())
+
+    # Place an order
+    order = {
+        'size': amount,
+        'price': price,
+        'side': direction,
+        'product_id': pair,
+    }
+
+    print('\nOrder request:', order)
+
+    r = requests.post(api_url + 'orders', json=order, auth=auth)
+    print('\nOrder created:', r.json())
+
+    # Show list of orders
+    r = requests.get('https://api-public.sandbox.pro.coinbase.com/orders', auth=auth)
+    print('\nList of orders:', r.json())
+
+def cancelOrder(api_key, secret_key, passphrase, uuid):
+    auth = CoinbaseExchangeAuth(api_key, secret_key, passphrase)
+
+    # Cancel an order
+    url = ['https://api-public.sandbox.pro.coinbase.com/orders/', uuid]
+    url = "".join(url)
+    r = requests.delete(url, auth=auth)
+    print('Order canceled:', r.json())
+
+def refreshDataSQlite(setTableName, pair):
+    conn = sqlite3.connect(setTableName)
+    c = conn.cursor()
+
+    tableCreationStatement = "CREATE TABLE IF NOT EXISTS " + setTableName + """(Id INTEGER PRIMARY KEY, 
+    traded_btc REAL, price REAL, created_at_int INT, side TEXT)"""
+
+    c.execute(tableCreationStatement)
+    data_frame = refreshData(pair)
+
+    for i in range(len(data_frame)):
+        setTableInsert = ("INSERT OR REPLACE INTO " + setTableName + """(Id, traded_btc, price, created_at_int, side) 
+        VALUES(?,?,?,?,?);""")
+
+        print("INSERT INTO" + setTableName + ":" + str(i) + "," + str(data_frame[i]['trade_id']) + "," + str(data_frame[i]['price']) + "," + data_frame[i]['time'] + "," + data_frame[i]['side'])
+        
+        c.execute(setTableInsert,(str(i), str(data_frame[i]['trade_id']), str(data_frame[i]['price']), data_frame[i]['time'], data_frame[i]['side']))
+        conn.commit() 
     c.close()
     conn.close()
 
@@ -293,9 +445,11 @@ def main():
         print("5. Create a sqlite table to store said data")
         print("6. Store candle data in the db")
         print("7. Modify function to update when new candle data is available")
-        print("8. Store the data in sqlite")
+        print("8. Extract and store all available data in sqlite")
+        print("9. Create an order")
+        print("10.Cancel an order")
         choice = int(input())
-        while(choice != 1 and choice !=2 and choice !=3 and choice !=4 and choice !=5 and choice !=6 and choice !=7 and choice !=8 ):
+        while(choice != 1 and choice !=2 and choice !=3 and choice !=4 and choice !=5 and choice !=6 and choice !=7 and choice !=8 and choice != 9 and choice != 10):
             print("Invalid input, please choose a number between 1 and 8")
             choice = int(input())
         if choice == 1:
@@ -351,7 +505,67 @@ def main():
             exchangeName = 'Coinbase'
             setTableName = str(exchangeName + "_" + pair + "_" + str(duration))
             store_candle(setTableName, pair_bis, duration)
+        elif choice == 7:
+            DictionnaryPairPrint()
+            print("Choose a pair (use ctrl + f to find the number easily)")
+            nbr = int(input())
+            pair = DictionnaryPair(nbr)
+            pair_bis = DictionnaryPairTable(nbr)
+            DictionnaryGranularityPrint()
+            print("Choose the duration")
+            duration = DictionnaryGranularity(int(input()))
+            exchangeName = 'Coinbase'
+            print("Entrez le nom de la db que vous souhaitez update")
+            setTableName = input()
+            setTableName1 = str("last_checks_"+ exchangeName + "_" + pair_bis + "_" + str(duration))
+            trackupdates(setTableName, setTableName1, pair, duration)
+        elif choice == 8 :
+            DictionnaryPairPrint()
+            print("Choose a pair (use ctrl + f to find the number easily)")
+            nbr = int(input())
+            pair = DictionnaryPairTable(nbr)
+            pair_bis = DictionnaryPair(nbr)
+            exchangeName = 'Coinbase'
+            setTableName = str(exchangeName + "_" + pair)
+            print(setTableName)
+            refreshDataSQlite(setTableName, pair_bis)
+        elif choice == 9:
+            print('\nEnter your API Key:')
+            api_key = bytes(input(), encoding = 'utf-8')
+            print('Enter your API Secret Key:')
+            secret_key = bytes(input(), encoding = 'utf-8')
+            print('Enter your Passphrase:')
+            passphrase = bytes(input(), encoding = 'utf-8')
 
+            # Default values
+            amount = 1.0
+            price = 1.0
+            direction = 'buy'
+            pair = 'BTC-USD'
+            orderType = 'limit'
+
+            createOrder(api_key, secret_key, passphrase, direction, price, amount, pair, orderType)
+        elif choice == 10:
+            print('\nEnter your API Key:')
+            api_key = bytes(input(), encoding = 'utf-8')
+            print('Enter your API Secret Key:')
+            secret_key = bytes(input(), encoding = 'utf-8')
+            print('Enter your Passphrase:')
+            passphrase = bytes(input(), encoding = 'utf-8')
+
+            # Show initial list of orders
+            auth = CoinbaseExchangeAuth(api_key, secret_key, passphrase)
+            r = requests.get('https://api-public.sandbox.pro.coinbase.com/orders', auth=auth)
+            print('\nInitial list of orders:', r.json())
+
+            print('\nEnter the order ID you want to cancel:')
+            uuid = input()
+
+            cancelOrder(api_key, secret_key, passphrase, uuid)
+
+            # Show final list of orders
+            r = requests.get('https://api-public.sandbox.pro.coinbase.com/orders', auth=auth)
+            print('\nFinal list of orders:', r.json())
 
         print("Run again or Exit ?")
         print("1. Run again !")
@@ -371,5 +585,6 @@ main()
     
 
 
-
+#https://api.pro.coinbase.com/products/BTC-USD/candles?start=2015-01-07T23:47:25.201Z
+#https://api.pro.coinbase.com/products/BTC-USD/candles?start=2019-04-10T02:00:00+201Z&end=2015-12-07T23:47:25.201Z&granularity=86400
 
