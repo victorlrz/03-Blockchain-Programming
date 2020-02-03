@@ -20,13 +20,13 @@ The command to create an order does not work, the program displays the default v
        POST /orders
        {'message': 'invalid signature'}
 Indeed, we did not succeed to find the correct signature to create an order.
-The program ends up showing the list of current open orders from the profile that the API key belongs to.
+The program ends up showing the **list of current open orders** from the profile that the API key belongs to.
 
 
 ## 10. Cancel an order
-The beginning of this part is exactly the same as before with the three needed parameters.
-Then, the code displays the initial list of orders from the profile of the API key.
+The beginning of this part is exactly the same as before with the *three needed parameters*.
+Then, the code displays the **initial list of orders** from the profile of the API key.
 
        r = requests.get('https://api-public.sandbox.pro.coinbase.com/orders', auth=auth)
-Next, it asks the user to enter the order ID he wants to cancel and delete it.
+Next, it asks the user to **enter the order ID** he wants to cancel and delete it.
 After that, it displays the list of orders again to show that the selected order has disappeared.
