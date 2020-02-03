@@ -33,10 +33,15 @@
   We create a connection and commit each "tuples".
 
 #def trackupdates(setTableName,setTableName1, pair, duration):
-  We get the first_date in our previous candle dataset (the most recent). Then we get the current_date
-  and we do the difference between those dates. We convert the difference between these dates in second.
-  
+  We get the first_date in our previous candle dataset (the most recent). Then we get the           current_date
+  and we do the difference between those dates. We convert the difference between those dates in    seconds. Then, we calculate the number of loop needed (in function of the granularity chosen by the user) and get candles data. Then we create the check_updates table and insert candles data.
 
+#def refreshDataSQlite(setTableName, pair):
+  Store the trade data in SQlite
+
+#Dictionnary
+  They are used in the main, easier to choose pair, duration and display data.
+  
 ## 9. Create an order
 In this part, the user has to enter three parameters of his **Coinbase Pro Sandbox** account (https://public.sandbox.pro.coinbase.com):
 - his API Key
