@@ -43,7 +43,7 @@ Explanation of def for the GET part:
   
 # Tasks list - POST
   
-## 9. Create an order
+## Create an order
 In this part, the user has to enter three parameters of his **Coinbase Pro Sandbox** account (https://public.sandbox.pro.coinbase.com):
 - his API Key
 - his API Secret Key
@@ -62,7 +62,7 @@ Indeed, we did not succeed to find the correct signature to create an order.
 The program ends up showing the **list of current open orders** from the profile that the API key belongs to.
 
 
-## 10. Cancel an order
+## Cancel an order
 The beginning of this part is exactly the same as before with the *three needed parameters*.
 Then, the code displays the **initial list of orders** from the profile of the API key.
 
